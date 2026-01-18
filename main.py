@@ -830,7 +830,6 @@ def kb_role() -> InlineKeyboardMarkup:
 def kb_client_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📝 Создать доставку", callback_data="client:new_order")],
-        [InlineKeyboardButton("📦 Статус доставки", callback_data="client:status:open")],
         [InlineKeyboardButton("📷 Мои заказы сегодня", callback_data="client:orders_today")],
         [InlineKeyboardButton("🔁 Сменить роль", callback_data="role:reset")],
     ])
