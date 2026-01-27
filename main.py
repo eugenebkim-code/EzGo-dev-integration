@@ -23,6 +23,9 @@
 # - Завершение: кнопка "Заказ выполнен" -> обязательно скриншот -> отправка клиенту и админу
 # - Клиент: "Статус доставки" (по активному заказу) + "Мои заказы" (с фильтром)
 # - Клиент может отозвать заказ только если он NEW (никто не взял)
+from dotenv import load_dotenv
+load_dotenv()
+
 print("=== FILE LOADED ===", flush=True)
 import os
 import re
@@ -823,7 +826,7 @@ def kb_location() -> InlineKeyboardMarkup:
 def kb_role() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🙋 Я клиент", callback_data="role:client")],
-        [InlineKeyboardButton("🛵 Я курьер", callback_data="role:courier")],
+        [InlineKeyboardButton("🛵 Я курьер", callback_data="role:couriыer")],
     ])
 
 
@@ -2352,6 +2355,70 @@ async def calc_recommended_price_krw(pickup_addr: str, drop_addr: str) -> Option
     price = round_krw_1000(raw_price)
     log.info("PRICE FINAL | raw=%s | rounded=%s", raw_price, price)
     return price
+
+# =========================
+# WEB API → COURIER BRIDGE
+# =========================
+
+async def create_order_from_webapi(payload: dict) -> bool:
+    """
+    Принимает заказ от Web API.
+    Курьерка НЕ генерит order_id.
+    """
+
+    try:
+        order_id = str(payload.get("order_id", "")).strip()
+        if not order_id:
+            log.warning("WEBAPI ORDER REJECTED: no order_id")
+            return False
+
+        # защита от дублей
+        if order_id in ORDERS:
+            log.info("WEBAPI ORDER DUPLICATE: %s", order_id)
+            return True
+
+        order = Order(
+            order_id=order_id,
+            created_at=now_ts(),
+            location=payload.get("city", ""),
+            price_krw=0,  # цена не в зоне курьерки
+            status=ORDER_NEW,
+
+            client_tg_id=int(payload.get("client_tg_id", 0)),
+            client_username="",
+            recipient_contact_text=f"{payload.get('client_name','')} · {payload.get('client_phone','')}",
+
+            pickup_address_ko=payload.get("pickup_address", ""),
+            drop_address_ko=payload.get("delivery_address", ""),
+            door_code="",
+
+            delivery_type="webapi",
+            delivery_type_other_text=payload.get("comment", ""),
+            delivery_time_type="",
+            delivery_time_text="",
+        )
+
+        ORDERS[order_id] = order
+
+        if SHEETS:
+            SHEETS.insert_order(asdict(order))
+            SHEETS.log_event(
+                payload.get("client_tg_id", 0),
+                ROLE_CLIENT,
+                "ORDER_CREATED_FROM_WEBAPI",
+                order_id=order_id
+            )
+
+        log.info("WEBAPI ORDER ACCEPTED: %s", order_id)
+
+        # 🔔 уведомляем курьеров
+        asyncio.create_task(notify_new_order(None, order))
+
+        return True
+
+    except Exception:
+        log.exception("WEBAPI ORDER CREATE FAILED")
+        return False
 
     
 # =========================
