@@ -25,7 +25,7 @@
 # - Клиент может отозвать заказ только если он NEW (никто не взял)
 from dotenv import load_dotenv
 load_dotenv()
-
+from webapi_adapter import send_status_to_webapi
 print("=== FILE LOADED ===", flush=True)
 import os
 import re
@@ -57,7 +57,8 @@ from datetime import datetime, date, timedelta
 
 import functools
 import asyncio
-
+from fastapi import FastAPI, Header, HTTPException
+import uvicorn
 
 # =========================
 # LOGGING
@@ -100,7 +101,7 @@ LOC_DUNPO = "Dunpo"
 LOC_ASAN = "Asan"
 LOC_SINCHANG = "Sinchang"
 
-
+EXTERNAL_ORDERS: dict[str, dict] = {}
 # =========================
 # ROLE + STATES
 # =========================
@@ -1686,7 +1687,7 @@ async def handle_picked_up(query, context, courier_id: int, order_id: str):
         if SHEETS:
             SHEETS.update_order(asdict(order))
             SHEETS.log_event(courier_id, ROLE_COURIER, "ORDER_PICKED_UP", order_id=order_id)
-
+    await send_status_to_webapi(order.order_id, "order_on_hands")
     await ui_render(
         context,
         courier_id,
@@ -1893,7 +1894,7 @@ async def handle_in_progress_clicked(query, context: ContextTypes.DEFAULT_TYPE, 
         if SHEETS:
             SHEETS.update_order(asdict(order))
             SHEETS.log_event(courier_id, ROLE_COURIER, "ORDER_EN_ROUTE", order_id=order_id)
-
+    await send_status_to_webapi(order.order_id, "courier_departed")
     await ui_render(
         context,
         courier_id,
@@ -2016,7 +2017,7 @@ async def handle_proof_photo(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if SHEETS:
             SHEETS.update_order(asdict(order))
             SHEETS.log_event(uid, ROLE_COURIER, "PROOF_RECEIVED", order_id=order_id)
-
+    await send_status_to_webapi(order.order_id, "delivered")
     # 🔴 ЖЕСТКО разрываем старый UI
     context.user_data.pop(UI_MSG_ID_KEY, None)
 
@@ -2106,6 +2107,82 @@ async def handle_client_delete_problem(query, context: ContextTypes.DEFAULT_TYPE
 
     await ui_render(context, uid, "🗑 Заказ удален.", reply_markup=kb_client_menu())
 
+# =========================
+# WEB API SERVER
+# =========================
+
+webapi_app = FastAPI(title="Courier Bridge API")
+from pydantic import BaseModel
+from datetime import datetime
+from typing import Optional
+class CourierStatusUpdate(BaseModel):
+    status: str
+class ExternalCourierOrder(BaseModel):
+    order_id: str
+    source: str
+    client_tg_id: int
+    client_name: str
+    client_phone: str
+    pickup_address: str
+    delivery_address: str
+    pickup_eta_at: datetime
+    city: str
+    comment: Optional[str] = None
+
+@webapi_app.post("/api/v1/orders/{order_id}/status")
+async def update_order_status_from_external(
+    order_id: str,
+    payload: CourierStatusUpdate,
+):
+    order = EXTERNAL_ORDERS.get(order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    order["status"] = payload.status
+    order["updated_at"] = datetime.utcnow().isoformat()
+
+    return {"status": "ok"}
+
+@webapi_app.post("/api/v1/orders")
+async def create_order_from_external(payload: ExternalCourierOrder):
+    # idempotency
+    if payload.order_id in EXTERNAL_ORDERS:
+        return {
+            "status": "ok",
+            "delivery_order_id": EXTERNAL_ORDERS[payload.order_id]["delivery_order_id"],
+            "already_exists": True,
+        }
+
+    delivery_order_id = f"courier-{payload.order_id}"
+
+    EXTERNAL_ORDERS[payload.order_id] = {
+        **payload.dict(),
+        "delivery_order_id": delivery_order_id,
+        "status": "created",
+        "created_at": datetime.utcnow().isoformat(),
+    }
+
+    return {
+        "status": "ok",
+        "delivery_order_id": delivery_order_id,
+        "already_exists": False,
+    }
+
+WEBAPI_KEY = os.getenv("WEBAPI_KEY", "DEV_KEY")
+@webapi_app.post("/api/v1/orders")
+async def webapi_create_order(
+    payload: dict,
+    x_api_key: str = Header(...)
+):
+    if x_api_key != WEBAPI_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    ok = await create_order_from_webapi(payload)
+
+    if not ok:
+        raise HTTPException(status_code=400, detail="Order rejected")
+
+    return {"status": "ok"}
 # =========================
 # GOOGLE GEOCODE & Distance Matrix
 # =========================
@@ -3656,10 +3733,10 @@ async def cmd_go(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =========================
 def main():
     print("=== MAIN ENTERED ===", flush=True)
-    
+
     app = Application.builder().token(BOT_TOKEN).post_init(on_startup).build()
 
-    # handlers — ДО запуска
+    # handlers
     app.add_handler(CommandHandler("start", start_cmd))
     app.add_handler(CommandHandler("admin", admin_cmd))
     app.add_handler(CommandHandler("go", cmd_go))
@@ -3668,12 +3745,24 @@ def main():
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, on_message))
 
-    log.info("Bot starting...")
+    import threading
+
+    def run_webapi():
+        uvicorn.run(
+            webapi_app,
+            host="0.0.0.0",
+            port=9001,
+            log_level="info",
+        )
+
+    threading.Thread(target=run_webapi, daemon=True).start()
+
+    log.info("Bot + WebAPI starting (port 9001)")
     app.run_polling(
         allowed_updates=["message", "callback_query"],
         drop_pending_updates=True
     )
 
-
+    
 if __name__ == "__main__":
     main()
