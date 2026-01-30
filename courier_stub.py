@@ -1,3 +1,5 @@
+#courier_stub.py
+
 from fastapi import FastAPI, Header, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional
