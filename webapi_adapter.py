@@ -5,7 +5,7 @@ import logging
 log = logging.getLogger("webapi_adapter")
 
 WEB_API_URL = os.getenv("WEB_API_URL", "http://127.0.0.1:8000")
-WEB_API_KEY = os.getenv("WEB_API_KEY", "DEV_KEY")
+API_KEY = os.getenv("API_KEY", "DEV_KEY")
 
 async def send_status_to_webapi(order_id: str, status: str):
     try:
@@ -14,7 +14,7 @@ async def send_status_to_webapi(order_id: str, status: str):
                 f"{WEB_API_URL}/api/v1/orders/{order_id}/status",
                 json={"status": status},
                 headers={
-                    "X-API-KEY": WEB_API_KEY,
+                    "X-API-KEY": API_KEY,
                     "X-ROLE": "courier",
                 },
             )

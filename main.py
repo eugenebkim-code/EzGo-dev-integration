@@ -59,6 +59,7 @@ import functools
 import asyncio
 from fastapi import FastAPI, Header, HTTPException
 import uvicorn
+APP_CONTEXT: ContextTypes.DEFAULT_TYPE | None = None
 
 # =========================
 # LOGGING
@@ -68,6 +69,16 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
 log = logging.getLogger("easygo_delivery")
+
+# =========================
+# API KEY
+# =========================
+
+def require_api_key(
+    X_API_KEY: str = Header(..., alias="X-API-KEY")
+):
+    if X_API_KEY != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API key")
 
 
 # =========================
@@ -827,7 +838,7 @@ def kb_location() -> InlineKeyboardMarkup:
 def kb_role() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🙋 Я клиент", callback_data="role:client")],
-        [InlineKeyboardButton("🛵 Я курьер", callback_data="role:couriыer")],
+        [InlineKeyboardButton("🛵 Я курьер", callback_data="role:courier")],
     ])
 
 
@@ -1435,7 +1446,11 @@ async def _send_courier_naver_warning_once(context: ContextTypes.DEFAULT_TYPE, c
         log.warning("Courier warning send failed: %s", e)
 
 
-async def notify_new_order(context: ContextTypes.DEFAULT_TYPE, order: Order):
+async def notify_new_order(bot, order: Order):
+    if bot is None:
+        log.info("notify_new_order skipped (no telegram bot) | order_id=%s", order.order_id)
+        return
+
     text = render_order_offer_text(order)
 
     async def safe_send(coro, label: str):
@@ -1444,49 +1459,31 @@ async def notify_new_order(context: ContextTypes.DEFAULT_TYPE, order: Order):
         except Exception as e:
             log.warning("%s notify failed: %s", label, e)
 
-    tasks = []
-
-    # админы
     for admin_id in ADMIN_IDS:
-        tasks.append(
-            asyncio.create_task(
-                safe_send(
-                    lambda aid=admin_id: context.bot.send_message(
-                        chat_id=aid,
-                        text=f"🆕 Новый заказ\n\n{text}"
-                    ),
-                    "Admin"
-                )
+        asyncio.create_task(
+            safe_send(
+                lambda aid=admin_id: bot.send_message(
+                    chat_id=aid,
+                    text=f"🆕 Новый заказ\n\n{text}"
+                ),
+                "Admin"
             )
         )
 
-    # курьеры
     for cid, prof in COURIERS.items():
         if prof.status != COURIER_APPROVED:
             continue
 
-        # предупреждение про Naver тоже в фоне
-        tasks.append(
-            asyncio.create_task(
-                _send_courier_naver_warning_once(context, cid)
+        asyncio.create_task(
+            safe_send(
+                lambda ccid=cid: bot.send_message(
+                    chat_id=ccid,
+                    text=text,
+                    reply_markup=kb_order_offer(order),
+                ),
+                "Courier"
             )
         )
-
-        tasks.append(
-            asyncio.create_task(
-                safe_send(
-                    lambda ccid=cid: context.bot.send_message(
-                        chat_id=ccid,
-                        text=text,
-                        reply_markup=kb_order_offer(order),
-                    ),
-                    "Courier"
-                )
-            )
-        )
-
-    # 🔑 НЕ await !!!
-    # просто даем задачам уйти в фон
 
 
 async def notify_order_canceled(context: ContextTypes.DEFAULT_TYPE, order: Order):
@@ -1548,7 +1545,7 @@ async def handle_admin_callbacks(query, context: ContextTypes.DEFAULT_TYPE, data
             await ui_render(context, uid, "Пока нет заказов.")
             return
 
-        items.sort(key=lambda o: int(o.order_id), reverse=True)
+        items.sort(key=lambda o: o.created_at or "", reverse=True)
         for o in items[:10]:
             await ui_render(
                 context,
@@ -1639,20 +1636,47 @@ async def handle_admin_callbacks(query, context: ContextTypes.DEFAULT_TYPE, data
 # =========================
 # COURIER: CURRENT ORDERS
 # =========================
-async def show_current_orders_for_courier(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
+async def show_current_orders_for_courier(
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+):
+    uid = chat_id
+    log.info("SHOW_CURRENT_ORDERS | uid=%s", uid)
+
     if not courier_is_approved(chat_id):
-        await tg_retry(lambda: context.bot.send_message(chat_id=chat_id, text="Нет доступа."))
+        await tg_retry(lambda: context.bot.send_message(
+            chat_id=chat_id,
+            text="Нет доступа."
+        ))
         return
 
     items = [o for o in ORDERS.values() if o.status == ORDER_NEW]
+
     if not items:
-        await tg_retry(lambda: context.bot.send_message(chat_id=chat_id, text="Сейчас нет доступных заявок."))
+        await tg_retry(lambda: context.bot.send_message(
+            chat_id=chat_id,
+            text="Сейчас нет доступных заявок."
+        ))
         return
 
-    items.sort(key=lambda o: int(o.order_id), reverse=True)
+    try:
+        items.sort(key=lambda o: int(o.order_id), reverse=True)
+    except Exception as e:
+        log.warning("ORDER SORT FAILED | %s", e)
+
+    log.info(
+        "SHOW_CURRENT_ORDERS | uid=%s | total_orders=%s | visible=%s",
+        uid,
+        len(ORDERS),
+        len(items),
+    )
 
     await _send_courier_naver_warning_once(context, chat_id)
-    await tg_retry(lambda: context.bot.send_message(chat_id=chat_id, text="📋 Текущие заявки:"))
+
+    await tg_retry(lambda: context.bot.send_message(
+        chat_id=chat_id,
+        text="📋 Текущие заявки:"
+    ))
 
     for o in items[:20]:
         try:
@@ -1660,13 +1684,22 @@ async def show_current_orders_for_courier(context: ContextTypes.DEFAULT_TYPE, ch
                 chat_id=chat_id,
                 text=render_order_offer_text(order),
                 reply_markup=kb_order_offer(order),
-                
             ))
         except BadRequest as e:
-            # чтобы не "висло" на одной битой отправке
-            log.warning("BadRequest sending current order %s to %s: %s", o.order_id, chat_id, e)
+            log.warning(
+                "BadRequest sending current order %s to %s: %s",
+                o.order_id,
+                chat_id,
+                e
+            )
         except Exception as e:
-            log.warning("Failed sending current order %s to %s: %s", o.order_id, chat_id, e)
+            log.warning(
+                "Failed sending current order %s to %s: %s",
+                o.order_id,
+                chat_id,
+                e
+            )
+
 
 async def handle_picked_up(query, context, courier_id: int, order_id: str):
     async with ORDER_LOCK:
@@ -2112,11 +2145,26 @@ async def handle_client_delete_problem(query, context: ContextTypes.DEFAULT_TYPE
 # =========================
 
 webapi_app = FastAPI(title="Courier Bridge API")
+
 from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional
+from fastapi import Header, HTTPException
+import os
+
+EXTERNAL_ORDERS = {}
+
+API_KEY = os.getenv("API_KEY", "DEV_KEY")
+
+
+# =========================
+# MODELS
+# =========================
+
 class CourierStatusUpdate(BaseModel):
     status: str
+
+
 class ExternalCourierOrder(BaseModel):
     order_id: str
     source: str
@@ -2129,38 +2177,69 @@ class ExternalCourierOrder(BaseModel):
     city: str
     comment: Optional[str] = None
 
-@webapi_app.post("/api/v1/orders/{order_id}/status")
-async def update_order_status_from_external(
-    order_id: str,
-    payload: CourierStatusUpdate,
-):
-    order = EXTERNAL_ORDERS.get(order_id)
-    if not order:
-        raise HTTPException(status_code=404, detail="Order not found")
+    # 👇 новое
+    debug_notify_telegram: Optional[bool] = False
 
-    order["status"] = payload.status
-    order["updated_at"] = datetime.utcnow().isoformat()
 
-    return {"status": "ok"}
+# =========================
+# HELPERS
+# =========================
+
+from datetime import datetime, timezone
+
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+# =========================
+# ENDPOINTS
+# =========================
+
+import logging
+from fastapi import Header, HTTPException
+from datetime import datetime
+from typing import Dict
+
 
 @webapi_app.post("/api/v1/orders")
-async def create_order_from_external(payload: ExternalCourierOrder):
-    # idempotency
-    if payload.order_id in EXTERNAL_ORDERS:
+async def create_order_from_external(
+    payload: ExternalCourierOrder,
+    X_API_KEY: str = Header(..., alias="X-API-KEY"),
+):
+    # --- AUTH ---
+    if X_API_KEY != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    order_id = payload.order_id
+
+    # --- IDEMPOTENCY ---
+    if order_id in EXTERNAL_ORDERS:
         return {
             "status": "ok",
-            "delivery_order_id": EXTERNAL_ORDERS[payload.order_id]["delivery_order_id"],
+            "delivery_order_id": EXTERNAL_ORDERS[order_id]["delivery_order_id"],
             "already_exists": True,
         }
 
-    delivery_order_id = f"courier-{payload.order_id}"
+    delivery_order_id = f"courier-{order_id}"
 
-    EXTERNAL_ORDERS[payload.order_id] = {
-        **payload.dict(),
+    EXTERNAL_ORDERS[order_id] = {
+        **payload.model_dump(exclude={"debug_notify_telegram"}),
         "delivery_order_id": delivery_order_id,
         "status": "created",
-        "created_at": datetime.utcnow().isoformat(),
+        "created_at": utc_now_iso(),
     }
+
+    log.info(
+        "[COURIER][HTTP] order accepted | order_id=%s | debug_notify=%s",
+        order_id,
+        payload.debug_notify_telegram,
+    )
+
+    # 🔑 КЛЮЧЕВОЙ МОСТ
+    await create_order_from_webapi(
+        payload.model_dump(),
+        notify_telegram=bool(payload.debug_notify_telegram),
+    )
 
     return {
         "status": "ok",
@@ -2168,21 +2247,26 @@ async def create_order_from_external(payload: ExternalCourierOrder):
         "already_exists": False,
     }
 
-WEBAPI_KEY = os.getenv("WEBAPI_KEY", "DEV_KEY")
-@webapi_app.post("/api/v1/orders")
-async def webapi_create_order(
-    payload: dict,
-    x_api_key: str = Header(...)
+
+@webapi_app.post("/api/v1/orders/{order_id}/status")
+async def update_order_status_from_external(
+    order_id: str,
+    payload: CourierStatusUpdate,
 ):
-    if x_api_key != WEBAPI_KEY:
-        raise HTTPException(status_code=401, detail="Invalid API key")
+    """
+    Обновление статуса заказа из внешнего источника
+    (курьер / система).
+    """
 
-    ok = await create_order_from_webapi(payload)
+    order = EXTERNAL_ORDERS.get(order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
 
-    if not ok:
-        raise HTTPException(status_code=400, detail="Order rejected")
+    order["status"] = payload.status
+    order["updated_at"] = utc_now_iso()
 
     return {"status": "ok"}
+
 # =========================
 # GOOGLE GEOCODE & Distance Matrix
 # =========================
@@ -2437,7 +2521,7 @@ async def calc_recommended_price_krw(pickup_addr: str, drop_addr: str) -> Option
 # WEB API → COURIER BRIDGE
 # =========================
 
-async def create_order_from_webapi(payload: dict) -> bool:
+async def create_order_from_webapi(payload: dict, notify_telegram: bool = False) -> bool:
     """
     Принимает заказ от Web API.
     Курьерка НЕ генерит order_id.
@@ -2488,8 +2572,15 @@ async def create_order_from_webapi(payload: dict) -> bool:
 
         log.info("WEBAPI ORDER ACCEPTED: %s", order_id)
 
-        # 🔔 уведомляем курьеров
-        asyncio.create_task(notify_new_order(None, order))
+        # 🔔 уведомляем курьеров ВСЕГДА (если телега готова)
+        if APP_CONTEXT:
+            log.info("WEBAPI ORDER TELEGRAM NOTIFY | order_id=%s", order_id)
+            asyncio.create_task(notify_new_order(APP_CONTEXT, order))
+        else:
+            log.warning(
+                "WEBAPI ORDER TELEGRAM SKIPPED | APP_CONTEXT not ready | order_id=%s",
+                order_id,
+            )
 
         return True
 
@@ -2526,14 +2617,28 @@ async def handle_hard_reset(query, context: ContextTypes.DEFAULT_TYPE):
     await render_home_root(context, uid)
 
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    
     query = update.callback_query
     if not query:
         return
 
-    uid = query.from_user.id
+    try:
+        await query.answer()
+    except Exception as e:
+        log.warning("query.answer failed early: %s", e)
+
     data = query.data or ""
-    
+    uid = query.from_user.id
+
+    log.info("CALLBACK RECEIVED | uid=%s | data=%s", uid, data)
+
+    # --- DEBUG (временно можно оставить) ---
+    log.info("CALLBACK RECEIVED | uid=%s | data=%s", uid, data)
+
+    # --- ADMIN ---
+    if data.startswith("admin:"):
+        await handle_admin_callbacks(query, context, data)
+        return
+
     # 🔁 СМЕНА РОЛИ — должна работать ВСЕГДА
     if data == "role:reset":
         context.user_data.clear()
@@ -2557,7 +2662,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         order = ORDERS.get(order_id)
 
         if not order or order.courier_tg_id != uid:
-            await query.answer("Нет доступа")
+            try:
+                await context.bot.send_message(chat_id=uid, text="Нет доступа")
+            except Exception as e:
+                log.warning("query.answer failed (no access): %s", e)
             return
 
         if what == "pickup":
@@ -2575,15 +2683,6 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get(START_LOCK_KEY):
         return
 
-    if context.user_data.get(UI_RESET_KEY):
-        await query.answer("Обновление…")
-        return
-
-    try:
-        await query.answer()
-    except Exception:
-        pass
-
     uid = query.from_user.id
     uname = query.from_user.username or ""
     current_role = context.user_data.get(USER_ROLE_KEY, ROLE_UNKNOWN)
@@ -2595,11 +2694,11 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         order = ORDERS.get(order_id)
 
         if not order or order.client_tg_id != uid:
-            await query.answer("Фото недоступно", show_alert=True)
+            await ui_render(context, uid, "Нет доступа")
             return
 
         if not order.proof_image_file_id:
-            await query.answer("Фото еще нет", show_alert=True)
+            await ui_render(context, uid, "Нет доступа")
             return
 
         await tg_retry(lambda: context.bot.send_photo(
@@ -2646,7 +2745,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     if CLIENT_STATE_KEY not in context.user_data:
-        await query.answer("Сессия обновлена. Нажмите /start", show_alert=False)
+        await ui_render(context, uid, "Сессия обновлена, нажмите /start")
         return
 
     # фильтр выполненных заказов курьера
@@ -3735,6 +3834,11 @@ def main():
     print("=== MAIN ENTERED ===", flush=True)
 
     app = Application.builder().token(BOT_TOKEN).post_init(on_startup).build()
+    
+    global APP_CONTEXT
+    APP_CONTEXT = app.bot  # 👈 ВАЖНО: bot, а не application
+
+    
 
     # handlers
     app.add_handler(CommandHandler("start", start_cmd))
