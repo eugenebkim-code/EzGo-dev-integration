@@ -2585,8 +2585,8 @@ async def create_order_from_webapi(payload: dict, notify_telegram: bool = False)
         return True
 
     except Exception:
-        log.exception("WEBAPI ORDER CREATE FAILED")
-        return False
+        log.exception("[COURIER_CREATE_EXCEPTION]")
+        return {"status": "error", "reason": str(e)}
 
     
 # =========================
