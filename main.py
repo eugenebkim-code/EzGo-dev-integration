@@ -2184,8 +2184,8 @@ class ExternalCourierOrder(BaseModel):
     pickup_eta_at: datetime
     city: str
     comment: Optional[str] = None
+    price_krw: Optional[int] = 0
 
-    # 👇 новое
     debug_notify_telegram: Optional[bool] = False
 
 
@@ -2550,7 +2550,7 @@ async def create_order_from_webapi(payload: dict, notify_telegram: bool = False)
             order_id=order_id,
             created_at=now_ts(),
             location=payload.get("city", ""),
-            price_krw=0,  # цена не в зоне курьерки
+            price_krw=int(payload.get("price_krw", 0) or 0),
             status=ORDER_NEW,
 
             client_tg_id=int(payload.get("client_tg_id", 0)),
