@@ -40,9 +40,23 @@ def create_order(payload: CourierOrderCreate):
     "/api/v1/orders/{order_id}/status",
     dependencies=[Depends(require_api_key)],
 )
+@app.post(
+    "/api/v1/orders/{order_id}/status",
+    dependencies=[Depends(require_api_key)],
+)
 def update_status(order_id: str, payload: dict):
     print("[COURIER STUB] status update", order_id, payload)
-    return {"status": "ok"}
 
+    status = payload.get("status")
 
-print("### COURIER STUB LOADED ###")
+    # 🧪 STUB: эмулируем proof_image_file_id при delivered
+    if status == "delivered":
+        payload.setdefault(
+            "proof_image_file_id",
+            "AgACAgUAAxkBAAMvaXy56qSlwCN6yzQ9HAegHvZlvLAAAnANaxtDw-BXeRz7KoYq2swBAAMCAAN5AAM4BA"
+        )
+
+    return {
+        "status": "ok",
+        "echo": payload,
+    }

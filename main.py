@@ -2050,7 +2050,15 @@ async def handle_proof_photo(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if SHEETS:
             SHEETS.update_order(asdict(order))
             SHEETS.log_event(uid, ROLE_COURIER, "PROOF_RECEIVED", order_id=order_id)
-    await send_status_to_webapi(order.order_id, "delivered")
+    if not getattr(order, "proof_sent_to_webapi", False):
+        await send_status_to_webapi(
+            order.order_id,
+            "delivered",
+            proof_image_file_id=file_id,
+            proof_image_message_id=msg_id,
+        )
+        order.proof_sent_to_webapi = True
+        order.proof_sent_to_webapi = True
     # 🔴 ЖЕСТКО разрываем старый UI
     context.user_data.pop(UI_MSG_ID_KEY, None)
 
