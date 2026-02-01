@@ -572,31 +572,33 @@ class SheetsStore:
     def insert_order(self, order: Dict[str, Any]):
         oid = str(order["order_id"])
         row = [
-            oid,
-            order.get("created_at", ""),
-            order.get("location", ""),
-            str(order.get("price_krw", "")),
-            order.get("status", ""),
-            str(order.get("client_tg_id", "")),
-            order.get("client_username", ""),
-            order.get("recipient_contact_text", ""),
-            order.get("pickup_address_ko", ""),
-            order.get("drop_address_ko", ""),
-            order.get("door_code", ""),
-            order.get("delivery_type", ""),
-            order.get("delivery_time_type", ""),
-            order.get("delivery_time_text", ""),
-            order.get("taken_at", ""),
-            str(order.get("courier_tg_id", "")),
-            order.get("courier_name", ""),
-            order.get("courier_phone", ""),
-            order.get("in_progress_at", ""),
-            order.get("done_requested_at", ""),
-            order.get("completed_at", ""),
-            order.get("proof_image_file_id", ""),
-            order.get("proof_image_message_id", ""),
-            order.get("canceled_at", ""),
-            order.get("canceled_by", ""),
+            oid,                               # A
+            order.get("created_at", ""),       # B
+            order.get("location", ""),         # C
+            str(order.get("price_krw", "")),   # D
+            order.get("status", ""),           # E
+            str(order.get("client_tg_id", "")),# F
+            order.get("client_username", ""),  # G
+            order.get("recipient_contact_text",""), # H
+            order.get("pickup_address_ko", ""),# I
+            order.get("drop_address_ko", ""),  # J
+            order.get("door_code", ""),        # K
+            order.get("delivery_type", ""),    # L
+            order.get("delivery_time_type",""),# M
+            order.get("delivery_time_text",""),# N
+            order.get("taken_at", ""),          # O
+            str(order.get("courier_tg_id","")), # P
+            order.get("courier_name",""),       # Q
+            order.get("courier_phone",""),      # R
+            order.get("in_progress_at",""),     # S
+            order.get("done_requested_at",""),  # T
+            order.get("completed_at",""),       # U
+            order.get("proof_image_file_id",""),# V
+            order.get("proof_image_message_id",""), # W
+            order.get("canceled_at",""),        # X
+            order.get("canceled_by",""),        # Y
+            order.get("delivery_type_other_text",""), # Z
+            order.get("comment",""),                 # AA
         ]
         self.append_row(ORDERS_SHEET, row)
         self.order_row = {}
