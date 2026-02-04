@@ -3872,10 +3872,12 @@ def main():
     import threading
 
     def run_webapi():
+        port = int(os.getenv("PORT", "8080"))
+
         uvicorn.run(
             webapi_app,
             host="0.0.0.0",
-            port=9001,
+            port=port,
             log_level="info",
         )
 
