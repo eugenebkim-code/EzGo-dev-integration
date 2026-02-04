@@ -1,15 +1,16 @@
-#webapi_adapter.py
+# webapi_adapter.py
 
-import os
 import httpx
 import logging
+from typing import Optional, Dict, Any
 
 log = logging.getLogger("webapi_adapter")
 
-WEB_API_URL = os.getenv("WEB_API_URL", "http://127.0.0.1:8000")
-API_KEY = os.getenv("API_KEY", "DEV_KEY")
+# 🔒 ЖЕСТКО ФИКСИРУЕМ PROD WEB API
+WEB_API_BASE_URL = "https://web-api-integration-production.up.railway.app"
+WEB_API_KEY = "DEV_KEY"
+WEB_API_TIMEOUT = 10.0
 
-from typing import Optional, Dict, Any
 
 async def send_status_to_webapi(
     order_id: str,
@@ -24,10 +25,10 @@ async def send_status_to_webapi(
     if proof_image_message_id:
         payload["proof_image_message_id"] = proof_image_message_id
 
-    url = f"{WEB_API_URL}/api/v1/orders/{order_id}/status"
-    
+    url = f"{WEB_API_BASE_URL}/api/v1/orders/{order_id}/status"
+
     log.info(
-        "WEBAPI STATUS SENDING | order=%s status=%s url=%s has_proof=%s",
+        "[WEBAPI] courier -> status | order=%s status=%s url=%s has_proof=%s",
         order_id,
         status,
         url,
@@ -35,29 +36,38 @@ async def send_status_to_webapi(
     )
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=WEB_API_TIMEOUT) as client:
             resp = await client.post(
                 url,
                 json=payload,
                 headers={
-                    "X-API-KEY": API_KEY,
+                    "X-API-KEY": WEB_API_KEY,
                     "X-ROLE": "courier",
                 },
             )
 
         if resp.status_code == 200:
-            log.info("WEBAPI STATUS OK | order=%s status=%s", order_id, status)
-            return True
-        else:
-            log.error(
-                "WEBAPI STATUS FAILED | order=%s status=%s code=%s body=%s",
+            log.info(
+                "[WEBAPI] courier status OK | order=%s status=%s",
                 order_id,
                 status,
-                resp.status_code,
-                resp.text[:500],
             )
-            return False
+            return True
+
+        log.error(
+            "[WEBAPI] courier status FAILED | order=%s status=%s code=%s body=%s",
+            order_id,
+            status,
+            resp.status_code,
+            resp.text[:500],
+        )
+        return False
 
     except Exception as e:
-        log.exception("WEBAPI STATUS ERROR | order=%s status=%s error=%s", order_id, status, e)
+        log.exception(
+            "[WEBAPI] courier status ERROR | order=%s status=%s err=%s",
+            order_id,
+            status,
+            e,
+        )
         return False

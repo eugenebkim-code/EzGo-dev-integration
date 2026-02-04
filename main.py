@@ -2649,6 +2649,16 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_admin_callbacks(query, context, data)
         return
 
+    # 🏪 MARKETPLACE — старые kitchen callbacks отключены
+    if data.startswith("marketplace:kitchen:"):
+        log.info("MARKETPLACE | kitchen callback ignored (UI simplified) | uid=%s", uid)
+
+        await query.edit_message_text(
+            text="🛒 Откройте маркетплейс для выбора заведения и оформления заказа.",
+            reply_markup=kb_kitchen_select(),
+        )
+        return
+
     # 🔁 СМЕНА РОЛИ — должна работать ВСЕГДА
     if data == "role:reset":
         context.user_data.clear()
