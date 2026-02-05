@@ -2126,18 +2126,18 @@ async def handle_done_clicked(query, context: ContextTypes.DEFAULT_TYPE, courier
 
 
 async def handle_proof_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка фото подтверждения доставки"""
     
     uid = update.effective_user.id
     order_id = context.user_data.get("awaiting_proof_order_id", "")
 
-    log.info(
-        "HANDLE_PROOF_PHOTO | order_id=%s | status=%s | kitchen_id=%s",
-        order_id,
-        getattr(order, "status", None),
-        getattr(order, "kitchen_id", None),
-    )
+    log.info("🖼️ ========== HANDLE_PROOF_PHOTO ==========")
+    log.info("🖼️ uid=%s | order_id=%s", uid, order_id)
+    log.info("🖼️ user_data=%s", context.user_data)
 
+    # Проверка 1: есть ли order_id?
     if not order_id:
+        log.warning("❌ No order_id in user_data")
         context.user_data[COURIER_STATE_KEY] = K_NONE
         await ui_render(
             context,
@@ -2146,16 +2146,11 @@ async def handle_proof_photo(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return
 
+    # Проверка 2: есть ли заказ в ORDERS?
     order = ORDERS.get(order_id)
-
-    log.info(
-        "HANDLE_PROOF_PHOTO ORDER | order_id=%s | status=%s | kitchen_id=%s",
-        order_id,
-        getattr(order, "status", None),
-        getattr(order, "kitchen_id", None),
-    )
-
+    
     if not order:
+        log.warning("❌ Order not found | order_id=%s", order_id)
         context.user_data[COURIER_STATE_KEY] = K_NONE
         context.user_data.pop("awaiting_proof_order_id", None)
         await ui_render(
@@ -2165,7 +2160,19 @@ async def handle_proof_photo(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return
 
+    # Теперь можем логировать order
+    log.info(
+        "✅ ORDER FOUND | order_id=%s | status=%s | kitchen_id=%s | courier=%s",
+        order_id,
+        order.status,
+        getattr(order, "kitchen_id", None),
+        order.courier_tg_id,
+    )
+
+    # Проверка 3: правильный курьер?
     if order.courier_tg_id != uid:
+        log.warning("❌ Wrong courier | order=%s | expected=%s | got=%s", 
+                   order_id, order.courier_tg_id, uid)
         context.user_data[COURIER_STATE_KEY] = K_NONE
         context.user_data.pop("awaiting_proof_order_id", None)
         await ui_render(
@@ -2175,20 +2182,26 @@ async def handle_proof_photo(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return
 
+    # Проверка 4: правильный статус?
     if order.status != ORDER_DONE_PENDING:
+        log.warning("❌ Wrong status | order=%s | status=%s", order_id, order.status)
         context.user_data[COURIER_STATE_KEY] = K_NONE
         context.user_data.pop("awaiting_proof_order_id", None)
         await ui_render(
             context,
             update.effective_chat.id,
-            "Этот заказ сейчас не ожидает скриншот."
+            f"Этот заказ сейчас не ожидает скриншот (статус: {order.status})."
         )
         return
 
+    # ✅ ВСЕ проверки пройдены - обрабатываем фото
     photo = update.message.photo[-1]
     file_id = photo.file_id
     msg_id = str(update.message.message_id)
 
+    log.info("✅ PHOTO ACCEPTED | order=%s | file_id=%s", order_id, file_id)
+
+    # Остальной код БЕЗ ИЗМЕНЕНИЙ (с async with ORDER_LOCK и т.д.)
     async with ORDER_LOCK:
         order.proof_image_file_id = file_id
         order.proof_image_message_id = msg_id
