@@ -752,8 +752,6 @@ class CourierProfile:
     approved_at: str = ""
     rejected_at: str = ""
 
-
-@dataclass
 @dataclass
 class Order:
     # --- REQUIRED (без дефолтов) ---
