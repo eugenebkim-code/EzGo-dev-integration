@@ -354,31 +354,33 @@ VISITS_HEADERS = [
 ]
 
 ORDERS_HEADERS = [
-    "order_id",                   # A
-    "created_at",                 # B
-    "location",                   # C
-    "price_krw",                  # D
-    "status",                     # E
-    "client_tg_id",               # F
-    "client_username",            # G
-    "recipient_contact_text",     # H
-    "pickup_address_ko",          # I
-    "drop_address_ko",            # J
-    "door_code",                  # K
-    "delivery_type",              # L
-    "delivery_time_type",         # M
-    "delivery_time_text",         # N
-    "taken_at",                   # O
-    "courier_tg_id",              # P
-    "courier_name",               # Q
-    "courier_phone",              # R
-    "in_progress_at",             # S
-    "done_requested_at",          # T
-    "completed_at",               # U
-    "proof_image_file_id",        # V
-    "proof_image_message_id",     # W
-    "canceled_at",                # X
-    "canceled_by",                # Y
+    "order_id",                 # A
+    "created_at",               # B
+    "location",                 # C
+    "price_krw",                # D
+    "status",                   # E
+    "client_tg_id",             # F
+    "client_username",          # G
+    "recipient_contact_text",   # H
+    "pickup_address_ko",        # I
+    "drop_address_ko",          # J
+    "door_code",                # K
+    "delivery_type",            # L
+    "delivery_time_type",       # M
+    "delivery_time_text",       # N
+    "taken_at",                 # O
+    "courier_tg_id",            # P
+    "courier_name",             # Q
+    "courier_phone",            # R
+    "in_progress_at",           # S
+    "done_requested_at",        # T
+    "completed_at",             # U
+    "proof_image_file_id",      # V
+    "proof_image_message_id",   # W
+    "canceled_at",              # X
+    "canceled_by",              # Y
+    "delivery_type_other_text", # Z
+    "comment",                  # AA
 ]
 
 COURIERS_HEADERS = [
@@ -1405,7 +1407,7 @@ async def inject_external_order(payload: dict) -> bool:
 
         if APP_CONTEXT:
             asyncio.create_task(
-                notify_new_order(APP_CONTEXT, ORDERS[order_id])
+                notify_new_order(APP_CONTEXT, order)
             )
 
         return True
@@ -1444,7 +1446,9 @@ async def inject_external_order(payload: dict) -> bool:
         )
 
     if APP_CONTEXT:
-        asyncio.create_task(notify_new_order(APP_CONTEXT, order))
+        asyncio.create_task(
+            notify_new_order(APP_CONTEXT, order)
+        )
 
     return True
 
@@ -1532,6 +1536,13 @@ async def _send_courier_naver_warning_once(context: ContextTypes.DEFAULT_TYPE, c
 
 
 async def notify_new_order(bot, order: Order):
+    log.info(
+        "notify_new_order | admins=%s couriers=%s",
+        len(ADMIN_IDS),
+        len(COURIERS),
+    )
+    for cid, prof in COURIERS.items():
+        log.info("courier %s status=%s", cid, prof.status)
     if bot is None:
         log.info("notify_new_order skipped (no telegram bot) | order_id=%s", order.order_id)
         return
@@ -1565,6 +1576,7 @@ async def notify_new_order(bot, order: Order):
                     chat_id=ccid,
                     text=text,
                     reply_markup=kb_order_offer(order),
+                    disable_web_page_preview=True,
                 ),
                 "Courier"
             )
@@ -1907,6 +1919,28 @@ async def handle_take_order(query, context: ContextTypes.DEFAULT_TYPE, courier_i
                 )
             return
 
+        # 🔒 защита от дубля: если в памяти еще NEW, но в Sheets уже TAKEN/не NEW
+        if SHEETS and order_id in SHEETS.order_row:
+            try:
+                vals = SHEETS._read_range(f"{ORDERS_SHEET}!A{SHEETS.order_row[order_id]}:E{SHEETS.order_row[order_id]}")
+                if vals and vals[0] and len(vals[0]) >= 5:
+                    sheet_status = (vals[0][4] or "").strip().upper()
+                    if sheet_status and sheet_status != ORDER_NEW:
+                        order.status = sheet_status
+                        ORDERS[order_id] = order
+                        await ui_render(context, courier_id, "Этот заказ уже недоступен.")
+                        if SHEETS:
+                            SHEETS.log_event(
+                                courier_id,
+                                ROLE_COURIER,
+                                "TAKE_FAIL_SHEETS_NOT_NEW",
+                                order_id=order_id,
+                                meta=sheet_status
+                            )
+                        return
+            except Exception as e:
+                log.warning("Sheets status check failed (take order) | order_id=%s | %s", order_id, e)
+
         prof = COURIERS.get(courier_id)
 
         # назначаем заказ курьеру
@@ -1946,44 +1980,6 @@ async def handle_take_order(query, context: ContextTypes.DEFAULT_TYPE, courier_i
             ))
         except Exception as e:
             log.warning("Admin taken notify failed: %s", e)
-
-
-async def handle_bad_address(query, context: ContextTypes.DEFAULT_TYPE, courier_id: int, order_id: str):
-    if not courier_is_approved(courier_id):
-        await ui_render(context, courier_id, "Нет доступа.")
-        return
-
-    async with ORDER_LOCK:
-        order = ORDERS.get(order_id)
-        if not order:
-            await ui_render(context, courier_id, "Заказ не найден.")
-            return
-        if order.status != ORDER_NEW:
-            await ui_render(context, courier_id, "Этот заказ уже недоступен.")
-            if SHEETS:
-                SHEETS.log_event(courier_id, ROLE_COURIER, "BADADDR_FAIL_NOT_NEW", order_id=order_id, meta=order.status)
-            return
-
-        order.status = ORDER_PROBLEM
-        order.canceled_at = ""
-        order.canceled_by = ""
-        ORDERS[order_id] = order
-
-        if SHEETS:
-            SHEETS.update_order(asdict(order))
-            SHEETS.log_event(courier_id, ROLE_COURIER, "ORDER_BAD_ADDRESS", order_id=order_id)
-
-    # Сообщение курьеру + убираем "offer" клаву у сообщения (чтобы не пытались взять)
-    try:
-        await tg_retry(lambda: query.edit_message_reply_markup(reply_markup=None))
-    except Exception:
-        pass
-
-    await ui_render(context, courier_id,
-        f"⚠️ Ок, заказ #{order.order_id} помечен как проблемный..."
-    )
-
-    await notify_order_bad_address(context, order)
 
 
 async def handle_in_progress_clicked(query, context: ContextTypes.DEFAULT_TYPE, courier_id: int, order_id: str):
