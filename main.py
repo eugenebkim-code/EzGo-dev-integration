@@ -755,14 +755,13 @@ class CourierProfile:
 
 @dataclass
 class Order:
-    # --- ОБЯЗАТЕЛЬНЫЕ ---
+    # --- обязательные ---
     order_id: str
+    kitchen_id: int
     created_at: str
     location: str
     price_krw: int
     status: str
-
-    kitchen_id: int   # ← ДОБАВЛЕНО
 
     client_tg_id: int
     client_username: str
@@ -778,7 +777,7 @@ class Order:
     delivery_time_type: str
     delivery_time_text: str
 
-    # --- НЕОБЯЗАТЕЛЬНЫЕ ---
+    # --- служебные / опциональные ---
     taken_at: str = ""
     courier_tg_id: int = 0
     courier_name: str = ""
