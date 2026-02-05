@@ -3772,8 +3772,12 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # POLLING
 # =========================
 
-async def post_init(application: Application):
-    application.create_task(poll_standalone_orders())
+async def post_init(application):
+    application.job_queue.run_repeating(
+        lambda ctx: application.create_task(poll_standalone_orders()),
+        interval=5,
+        first=0,
+    )
 
 async def poll_standalone_orders():
     """
