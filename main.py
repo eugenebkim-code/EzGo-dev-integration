@@ -3772,6 +3772,9 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # POLLING
 # =========================
 
+async def post_init(application: Application):
+    application.create_task(poll_standalone_orders())
+
 async def poll_standalone_orders():
     """
     Курьер-бот опрашивает Standalone и забирает новые заказы
@@ -3822,6 +3825,8 @@ async def poll_standalone_orders():
                 log.exception("STANDALONE POLLING ERROR")
 
             await asyncio.sleep(interval)
+
+
 
 # =========================
 # STARTUP HOOK
@@ -3939,14 +3944,16 @@ async def cmd_go(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     print("=== MAIN ENTERED ===", flush=True)
 
-    app = Application.builder().token(BOT_TOKEN).post_init(on_startup).build()
+    app = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .post_init(post_init)
+        .build()
+    )
     
     global APP_CONTEXT
     APP_CONTEXT = app.bot  # 👈 ВАЖНО: bot, а не application
     
-    app.create_task(poll_standalone_orders())
-    
-
     # handlers
     app.add_handler(CommandHandler("start", start_cmd))
     app.add_handler(CommandHandler("admin", admin_cmd))
