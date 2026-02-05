@@ -2110,6 +2110,13 @@ async def handle_done_clicked(query, context: ContextTypes.DEFAULT_TYPE, courier
     context.user_data[COURIER_STATE_KEY] = K_AWAITING_PROOF
     context.user_data["awaiting_proof_order_id"] = order_id
 
+    log.info(
+        "ORDER WAITING FOR PROOF | order=%s | status=%s | kitchen_id=%s",
+        order.order_id,
+        order.status,
+        order.kitchen_id,
+    )
+
     await ui_render(
         context,
         courier_id,
@@ -2119,8 +2126,16 @@ async def handle_done_clicked(query, context: ContextTypes.DEFAULT_TYPE, courier
 
 
 async def handle_proof_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    
     uid = update.effective_user.id
     order_id = context.user_data.get("awaiting_proof_order_id", "")
+
+    log.info(
+        "HANDLE_PROOF_PHOTO | order_id=%s | status=%s | kitchen_id=%s",
+        order_id,
+        getattr(order, "status", None),
+        getattr(order, "kitchen_id", None),
+    )
 
     if not order_id:
         context.user_data[COURIER_STATE_KEY] = K_NONE
@@ -2132,6 +2147,14 @@ async def handle_proof_photo(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     order = ORDERS.get(order_id)
+
+    log.info(
+        "HANDLE_PROOF_PHOTO ORDER | order_id=%s | status=%s | kitchen_id=%s",
+        order_id,
+        getattr(order, "status", None),
+        getattr(order, "kitchen_id", None),
+    )
+
     if not order:
         context.user_data[COURIER_STATE_KEY] = K_NONE
         context.user_data.pop("awaiting_proof_order_id", None)
