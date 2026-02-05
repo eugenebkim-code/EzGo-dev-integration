@@ -712,6 +712,30 @@ class SheetsStore:
             })
         return out
 
+def get_kitchen_staff_chat_ids(self, kitchen_id: int) -> list[int]:
+    """
+    Sheet1:
+    A: kitchen_id
+    E: staff_chat_ids (пока одно значение)
+    """
+    try:
+        sheet = self.client.open_by_key(self.sheet_id).worksheet("Sheet1")
+        rows = sheet.get_all_values()
+    except Exception as e:
+        log.warning("Kitchen registry read failed: %s", e)
+        return []
+
+    for row in rows[1:]:
+        try:
+            if int(row[0]) == int(kitchen_id):
+                raw = row[4].strip()
+                if not raw:
+                    return []
+                return [int(raw)]
+        except Exception:
+            continue
+
+    return []
 
 # =========================
 # DATA
@@ -736,7 +760,7 @@ class Order:
     location: str
     price_krw: int
     status: str
-
+    kitchen_id: int = 0
     client_tg_id: int
     client_username: str
     recipient_contact_text: str
@@ -1414,6 +1438,7 @@ async def inject_external_order(payload: dict) -> bool:
 
     order = Order(
         order_id=order_id,
+        kitchen_id=int(payload.get("kitchen_id") or 0),
         created_at=now_ts(),
         location=payload.get("city", ""),
         price_krw=int(payload.get("price_krw", 0) or 0),
@@ -2177,6 +2202,26 @@ async def handle_proof_photo(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     context.user_data[COURIER_STATE_KEY] = K_NONE
     context.user_data.pop("awaiting_proof_order_id", None)
+    
+    # 🏪 уведомляем кухню (staff_chat_ids)
+    if SHEETS and order.kitchen_id:
+        try:
+            staff_ids = SHEETS.get_kitchen_staff_chat_ids(order.kitchen_id)
+            for staff_id in staff_ids:
+                try:
+                    await tg_retry(lambda sid=staff_id: context.bot.send_photo(
+                        chat_id=sid,
+                        photo=file_id,
+                        caption=(
+                            f"📦 Заказ #{order.order_id} доставлен\n\n"
+                            f"🚴 Курьер: {order.courier_name}\n"
+                            f"📞 Телефон: {order.courier_phone}"
+                        )
+                    ))
+                except Exception as e:
+                    log.warning("Kitchen staff notify failed: %s", e)
+        except Exception as e:
+            log.warning("Kitchen lookup failed: %s", e)
 
 
 async def handle_client_cancel(query, context: ContextTypes.DEFAULT_TYPE, uid: int, order_id: str):
