@@ -757,11 +757,13 @@ class CourierProfile:
 class Order:
     # --- обязательные ---
     order_id: str
-    kitchen_id: int
+    
     created_at: str
     location: str
     price_krw: int
     status: str
+
+    kitchen_id: int = 0  # 👈 ВАЖНО
 
     client_tg_id: int
     client_username: str
