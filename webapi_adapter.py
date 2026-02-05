@@ -7,7 +7,7 @@ from typing import Optional, Dict, Any
 log = logging.getLogger("webapi_adapter")
 
 # 🔒 ЖЕСТКО ФИКСИРУЕМ PROD WEB API
-WEB_API_BASE_URL = "https://marketplace-delivery-1-production.up.railway.app"
+WEB_API_BASE_URL = "https://web-api-integration-production.up.railway.app"
 WEB_API_KEY = "DEV_KEY"
 WEB_API_TIMEOUT = 10.0
 
