@@ -3772,63 +3772,81 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # POLLING
 # =========================
 
-async def post_init(application):
+from telegram.ext import Application, ContextTypes
+import os
+import logging
+
+log = logging.getLogger(__name__)
+
+async def post_init(application: Application):
+    if application.job_queue is None:
+        raise RuntimeError("JobQueue is None. Check PTB[job-queue] install")
+
+    interval = int(os.getenv("STANDALONE_POLL_INTERVAL", "5"))
+
     application.job_queue.run_repeating(
-        lambda ctx: application.create_task(poll_standalone_orders()),
-        interval=5,
-        first=0,
+        poll_standalone_orders,
+        interval=interval,
+        first=3,
+        name="poll-standalone-orders",
     )
 
-async def poll_standalone_orders():
+    log.info("✅ Standalone polling scheduled (interval=%s)", interval)
+
+async def poll_standalone_orders(context: ContextTypes.DEFAULT_TYPE):
     """
-    Курьер-бот опрашивает Standalone и забирает новые заказы
+    Курьер-бот опрашивает Standalone и забирает новые заказы.
+    Один тик. Повторы делает JobQueue.
     """
     url = os.getenv("STANDALONE_API_URL")
     api_key = os.getenv("STANDALONE_API_KEY")
-    interval = int(os.getenv("STANDALONE_POLL_INTERVAL", 5))
 
     if not url or not api_key:
-        log.warning("STANDALONE polling disabled (env not set)")
+        log.warning("STANDALONE polling skipped (env not set)")
         return
 
-    log.info("STANDALONE POLLING STARTED")
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(
+                f"{url}/api/v1/orders/pending",
+                headers={"X-API-KEY": api_key},
+            )
 
-    async with httpx.AsyncClient(timeout=5.0) as client:
-        while True:
-            try:
-                resp = await client.get(
-                    f"{url}/api/v1/orders/pending",
-                    headers={"X-API-KEY": api_key},
+            if resp.status_code != 200:
+                log.warning(
+                    "STANDALONE polling failed | code=%s body=%s",
+                    resp.status_code,
+                    resp.text[:200],
                 )
+                return
 
-                if resp.status_code != 200:
-                    log.warning("STANDALONE polling failed: %s", resp.status_code)
-                    await asyncio.sleep(interval)
+            data = resp.json()
+            orders = data.get("orders", [])
+
+            if orders:
+                log.info("STANDALONE polling tick | orders=%s", len(orders))
+
+            for payload in orders:
+                order_id = payload.get("order_id")
+
+                if not order_id:
                     continue
 
-                data = resp.json()
-                orders = data.get("orders", [])
+                if order_id in ORDERS:
+                    continue
 
-                for payload in orders:
-                    order_id = payload["order_id"]
+                log.info("STANDALONE ORDER RECEIVED | %s", order_id)
 
-                    if order_id in ORDERS:
-                        continue
+                ok = await inject_external_order(payload)
 
-                    log.info("STANDALONE ORDER RECEIVED | %s", order_id)
+                if ok:
+                    await client.post(
+                        f"{url}/api/v1/orders/{order_id}/mark_sent",
+                        headers={"X-API-KEY": api_key},
+                    )
 
-                    ok = await inject_external_order(payload)
-
-                    if ok:
-                        await client.post(
-                            f"{url}/api/v1/orders/{order_id}/mark_sent",
-                            headers={"X-API-KEY": api_key},
-                        )
-
-            except Exception:
-                log.exception("STANDALONE POLLING ERROR")
-
-            await asyncio.sleep(interval)
+    except Exception:
+        log.exception("STANDALONE POLLING ERROR")
 
 
 
@@ -3948,32 +3966,28 @@ async def cmd_go(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     print("=== MAIN ENTERED ===", flush=True)
 
-    app = (
+    application = (
         Application.builder()
         .token(BOT_TOKEN)
         .post_init(post_init)
         .build()
     )
-    
-    global APP_CONTEXT
-    APP_CONTEXT = app.bot  # 👈 ВАЖНО: bot, а не application
-    
+
     # handlers
-    app.add_handler(CommandHandler("start", start_cmd))
-    app.add_handler(CommandHandler("admin", admin_cmd))
-    app.add_handler(CommandHandler("go", cmd_go))
-    app.add_handler(CommandHandler("restart", restart_cmd))
-    app.add_handler(CommandHandler("clear", clear_cmd))
-    app.add_handler(CallbackQueryHandler(on_callback))
-    app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, on_message))
+    application.add_handler(CommandHandler("start", start_cmd))
+    application.add_handler(CommandHandler("admin", admin_cmd))
+    application.add_handler(CommandHandler("go", cmd_go))
+    application.add_handler(CommandHandler("restart", restart_cmd))
+    application.add_handler(CommandHandler("clear", clear_cmd))
+    application.add_handler(CallbackQueryHandler(on_callback))
+    application.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, on_message))
 
-   
-    log.info("Bot + WebAPI starting (port 9001)")
-    app.run_polling(
-        allowed_updates=["message", "callback_query"],
-        drop_pending_updates=True
-    )
+    # сохраняем bot для legacy-вызовов
+    global APP_CONTEXT
+    APP_CONTEXT = application.bot
 
+    application.run_polling()
 
+  
 if __name__ == "__main__":
     main()

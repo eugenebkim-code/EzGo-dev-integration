@@ -6,3 +6,4 @@ google-auth-oauthlib
 fastapi
 uvicorn[standard]
 pydantic
+python-telegram-bot[job-queue]==20.8
