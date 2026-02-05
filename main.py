@@ -2155,6 +2155,8 @@ async def handle_client_delete_problem(query, context: ContextTypes.DEFAULT_TYPE
 # WEB API SERVER
 # =========================
 
+from fastapi import FastAPI
+
 webapi_app = FastAPI(title="Courier Bridge API")
 
 from pydantic import BaseModel
@@ -3915,7 +3917,8 @@ def main():
     )
 
 
-
+# === ENTRYPOINT FOR RAILWAY ===
+app = webapi_app
 
 if __name__ == "__main__":
     main()
