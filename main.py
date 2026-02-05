@@ -3782,6 +3782,13 @@ import logging
 log = logging.getLogger(__name__)
 
 async def post_init(application: Application):
+    global APP_CONTEXT
+
+    APP_CONTEXT = application.bot
+
+    # 🔴 ВАЖНО: инициализируем Sheets + загрузку данных
+    await on_startup(application)
+
     if application.job_queue is None:
         raise RuntimeError("JobQueue is None. Check PTB[job-queue] install")
 
