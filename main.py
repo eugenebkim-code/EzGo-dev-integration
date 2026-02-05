@@ -57,10 +57,15 @@ from datetime import datetime, date, timedelta
 
 import functools
 import asyncio
-from fastapi import FastAPI, Header, HTTPException
 import uvicorn
 import httpx
 
+from fastapi import FastAPI, Header, HTTPException
+
+# =========================
+# FASTAPI APP (ОБЯЗАТЕЛЬНО ВВЕРХУ)
+# =========================
+webapi_app = FastAPI(title="Courier Bridge API")
 
 APP_CONTEXT: ContextTypes.DEFAULT_TYPE | None = None
 
