@@ -3908,7 +3908,9 @@ def main():
             log_level="info",
         )
 
-    threading.Thread(target=run_webapi, daemon=True).start()
+    thread = threading.Thread(target=run_webapi, daemon=False)
+    thread.start()
+    time.sleep(3)  # Даём FastAPI стартовать
 
     log.info("Bot + WebAPI starting (port 9001)")
     app.run_polling(
