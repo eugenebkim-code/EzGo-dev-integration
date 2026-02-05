@@ -2195,41 +2195,9 @@ async def handle_proof_photo(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "✅ Заказ завершен.\n\n🛵 Меню курьера:",
         reply_markup=kb_courier_menu_approved(uid)
     )
-    
-    # уведомляем клиента
-    try:
-        await tg_retry(lambda: context.bot.send_photo(
-            chat_id=order.client_tg_id,
-            photo=file_id,
-            caption="✅ Ваш заказ выполнен."
-        ))
-    except Exception as e:
-        log.warning("Client proof send failed: %s", e)
-
-    # уведомляем админов
-    for admin_id in ADMIN_IDS:
-        try:
-            await tg_retry(lambda aid=admin_id: context.bot.send_photo(
-                chat_id=aid,
-                photo=file_id,
-                caption=(
-                    f"✅ Заказ #{order.order_id} завершен.\n"
-                    f"Курьер: {order.courier_name}, {order.courier_phone}"
-                )
-            ))
-        except Exception as e:
-            log.warning("Admin proof send failed: %s", e)
-
-    context.user_data[COURIER_STATE_KEY] = K_NONE
-    context.user_data.pop("awaiting_proof_order_id", None)
-    
-    # 🏪 уведомляем кухню (staff_chat_ids)
-
-    if not order.kitchen_id:
-        log.info("Kitchen notify skipped | no kitchen_id | order=%s", order.order_id)
-    else:
-        staff_ids = get_kitchen_staff_chat_ids_from_registry(order.kitchen_id)
-
+    # 1️⃣ уведомляем кухню
+    if order.kitchen_id:
+        staff_ids = KITCHEN_REGISTRY.get(int(order.kitchen_id), [])
         log.info(
             "Kitchen notify | order=%s | kitchen_id=%s | staff_ids=%s",
             order.order_id,
@@ -2249,7 +2217,50 @@ async def handle_proof_photo(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     )
                 ))
             except Exception as e:
-                log.warning("Kitchen staff notify failed | staff_id=%s | %s", staff_id, e)
+                log.warning("Kitchen staff notify failed: %s", e)
+    else:
+        log.info("Kitchen notify skipped | no kitchen_id | order=%s", order.order_id)
+
+
+    # 2️⃣ уведомляем клиента
+    try:
+        await tg_retry(lambda: context.bot.send_photo(
+            chat_id=order.client_tg_id,
+            photo=file_id,
+            caption="✅ Ваш заказ выполнен."
+        ))
+    except Exception as e:
+        log.warning("Client proof send failed: %s", e)
+
+
+    # 3️⃣ уведомляем админов
+    for admin_id in ADMIN_IDS:
+        try:
+            await tg_retry(lambda aid=admin_id: context.bot.send_photo(
+                chat_id=aid,
+                photo=file_id,
+                caption=(
+                    f"✅ Заказ #{order.order_id} завершен.\n"
+                    f"Курьер: {order.courier_name}, {order.courier_phone}"
+                )
+            ))
+        except Exception as e:
+            log.warning("Admin proof send failed: %s", e)
+
+
+    # 4️⃣ финальный UI (ОДИН РАЗ)
+    context.user_data.pop(UI_MSG_ID_KEY, None)
+    context.user_data[COURIER_STATE_KEY] = K_NONE
+    context.user_data.pop("awaiting_proof_order_id", None)
+
+    await ui_render(
+        context,
+        update.effective_chat.id,
+        "✅ Заказ завершен.\n\n🛵 Меню курьера:",
+        reply_markup=kb_courier_menu_approved(uid)
+    )
+    
+    
 
 
 async def handle_client_cancel(query, context: ContextTypes.DEFAULT_TYPE, uid: int, order_id: str):
