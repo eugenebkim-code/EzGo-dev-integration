@@ -6,7 +6,9 @@ from typing import Optional, Dict, Any
 
 log = logging.getLogger("webapi_adapter")
 
-# 🔒 ЖЕСТКО ФИКСИРУЕМ PROD WEB API
+# ✅ КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ:
+# Было: "https://marketplace-delivery-1-production.up.railway.app" (URL курьерки)
+# Стало: правильный URL Web API
 WEB_API_BASE_URL = "https://web-api-integration-production.up.railway.app"
 WEB_API_KEY = "DEV_KEY"
 WEB_API_TIMEOUT = 10.0
@@ -18,6 +20,11 @@ async def send_status_to_webapi(
     proof_image_file_id: Optional[str] = None,
     proof_image_message_id: Optional[str] = None,
 ) -> bool:
+    """
+    Отправляет статус курьерского заказа обратно в Web API.
+    
+    Этот метод вызывается из Courier Service когда курьер меняет статус заказа.
+    """
     payload: Dict[str, Any] = {"status": status}
 
     if proof_image_file_id:
@@ -48,14 +55,14 @@ async def send_status_to_webapi(
 
         if resp.status_code == 200:
             log.info(
-                "[WEBAPI] courier status OK | order=%s status=%s",
+                "[WEBAPI] ✅ courier status OK | order=%s status=%s",
                 order_id,
                 status,
             )
             return True
 
         log.error(
-            "[WEBAPI] courier status FAILED | order=%s status=%s code=%s body=%s",
+            "[WEBAPI] ❌ courier status FAILED | order=%s status=%s code=%s body=%s",
             order_id,
             status,
             resp.status_code,
@@ -65,7 +72,7 @@ async def send_status_to_webapi(
 
     except Exception as e:
         log.exception(
-            "[WEBAPI] courier status ERROR | order=%s status=%s err=%s",
+            "[WEBAPI] 💥 courier status ERROR | order=%s status=%s err=%s",
             order_id,
             status,
             e,
