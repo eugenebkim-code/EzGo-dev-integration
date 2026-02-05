@@ -755,12 +755,15 @@ class CourierProfile:
 
 @dataclass
 class Order:
+    # --- ОБЯЗАТЕЛЬНЫЕ ---
     order_id: str
     created_at: str
     location: str
     price_krw: int
     status: str
-    kitchen_id: int = 0
+
+    kitchen_id: int   # ← ДОБАВЛЕНО
+
     client_tg_id: int
     client_username: str
     recipient_contact_text: str
@@ -775,6 +778,7 @@ class Order:
     delivery_time_type: str
     delivery_time_text: str
 
+    # --- НЕОБЯЗАТЕЛЬНЫЕ ---
     taken_at: str = ""
     courier_tg_id: int = 0
     courier_name: str = ""
@@ -1431,7 +1435,7 @@ async def inject_external_order(payload: dict) -> bool:
 
         if APP_CONTEXT:
             asyncio.create_task(
-                notify_new_order(APP_CONTEXT, order)
+                notify_new_order(APP_CONTEXT, ORDERS[order_id])
             )
 
         return True
@@ -2164,7 +2168,7 @@ async def handle_proof_photo(update: Update, context: ContextTypes.DEFAULT_TYPE)
             proof_image_message_id=msg_id,
         )
         order.proof_sent_to_webapi = True
-        order.proof_sent_to_webapi = True
+        
     # 🔴 ЖЕСТКО разрываем старый UI
     context.user_data.pop(UI_MSG_ID_KEY, None)
 
@@ -2204,6 +2208,10 @@ async def handle_proof_photo(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data.pop("awaiting_proof_order_id", None)
     
     # 🏪 уведомляем кухню (staff_chat_ids)
+
+    if not order.kitchen_id:
+        log.info("Kitchen notify skipped | no kitchen_id | order=%s", order.order_id)
+
     if SHEETS and order.kitchen_id:
         try:
             staff_ids = SHEETS.get_kitchen_staff_chat_ids(order.kitchen_id)
