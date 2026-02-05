@@ -1401,6 +1401,13 @@ async def inject_external_order(payload: dict) -> bool:
         return False
 
     if order_id in ORDERS:
+        log.info("external order already exists | %s", order_id)
+
+        if APP_CONTEXT:
+            asyncio.create_task(
+                notify_new_order(APP_CONTEXT, ORDERS[order_id])
+            )
+
         return True
 
     order = Order(
