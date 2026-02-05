@@ -59,7 +59,7 @@ import functools
 import asyncio
 import uvicorn
 import httpx
-
+from telegram.ext import JobQueue
 from fastapi import FastAPI, Header, HTTPException
 
 # =========================
@@ -3969,6 +3969,7 @@ def main():
     application = (
         Application.builder()
         .token(BOT_TOKEN)
+        .job_queue(JobQueue())
         .post_init(post_init)
         .build()
     )
