@@ -2149,6 +2149,24 @@ async def handle_client_delete_problem(query, context: ContextTypes.DEFAULT_TYPE
             SHEETS.log_event(uid, ROLE_CLIENT, "ORDER_DELETED_AFTER_BADADDR", order_id=order_id)
 
     await ui_render(context, uid, "🗑 Заказ удален.", reply_markup=kb_client_menu())
+
+
+# =========================
+# WEB API SERVER
+# =========================
+
+webapi_app = FastAPI(title="Courier Bridge API")
+
+from pydantic import BaseModel
+from datetime import datetime
+from typing import Optional
+from fastapi import Header, HTTPException
+import os
+
+EXTERNAL_ORDERS = {}
+
+API_KEY = os.getenv("API_KEY", "DEV_KEY")
+
 # =========================
 # FAST API STANDALONE
 # =========================
@@ -2177,23 +2195,6 @@ async def notify_couriers(
     await broadcast_order_to_couriers(payload)
     
     return {"status": "ok", "order_id": order_id}
-
-# =========================
-# WEB API SERVER
-# =========================
-
-webapi_app = FastAPI(title="Courier Bridge API")
-
-from pydantic import BaseModel
-from datetime import datetime
-from typing import Optional
-from fastapi import Header, HTTPException
-import os
-
-EXTERNAL_ORDERS = {}
-
-API_KEY = os.getenv("API_KEY", "DEV_KEY")
-
 
 # =========================
 # MODELS
@@ -3917,6 +3918,8 @@ def main():
         drop_pending_updates=True
     )
 
-    
+
+
+
 if __name__ == "__main__":
     main()
