@@ -2176,24 +2176,20 @@ async def notify_couriers(
     payload: dict,
     X_API_KEY: str = Header(..., alias="X-API-KEY"),
 ):
-    """
-    Получает уведомление о новом заказе от standalone API
-    и рассылает курьерам в Telegram.
-    """
     if X_API_KEY != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API key")
-    
-    order_id = payload["order_id"]
-    
-    print(f"📬 [NOTIFY] New order from API: {order_id}")
-    
-    # Используйте существующую функцию рассылки курьерам
-    # Найдите в вашем коде функцию которая отправляет заказы курьерам
-    # и вызовите её здесь
-    
-    # Например:
-    await broadcast_order_to_couriers(payload)
-    
+
+    order_id = payload.get("order_id")
+    order = ORDERS.get(order_id)
+
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    if not APP_CONTEXT:
+        raise HTTPException(status_code=503, detail="Telegram bot not ready")
+
+    await notify_new_order(APP_CONTEXT, order)
+
     return {"status": "ok", "order_id": order_id}
 
 # =========================
@@ -2267,7 +2263,7 @@ async def create_order_from_external(
         "status": "created",
         "created_at": utc_now_iso(),
     }
-
+    print("🔥🔥🔥 NOTIFY MAIN BOT SHOULD BE CALLED HERE 🔥🔥🔥")
     log.info(
         "[COURIER][HTTP] order accepted | order_id=%s | debug_notify=%s",
         order_id,
