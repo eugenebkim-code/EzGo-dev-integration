@@ -121,6 +121,23 @@ LOC_ASAN = "Asan"
 LOC_SINCHANG = "Sinchang"
 
 EXTERNAL_ORDERS: dict[str, dict] = {}
+
+# 🔒 ВРЕМЕННЫЙ REGISTRY КУХОНЬ (HARDCODE)
+# источник: Sheet1 / колонка E (staff_chat_ids)
+KITCHEN_REGISTRY: dict[int, list[int]] = {
+    1: [2115245228],
+    2: [2115245228],
+    3: [2115245228],
+    4: [2115245228],
+    5: [1844813721],
+}
+
+# kitchen_registry.py или прямо в main.py
+
+
+def get_kitchen_staff_chat_ids_from_registry(kitchen_id: int) -> list[int]:
+    return KITCHEN_REGISTRY.get(int(kitchen_id), [])
+
 # =========================
 # ROLE + STATES
 # =========================
@@ -2210,25 +2227,29 @@ async def handle_proof_photo(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     if not order.kitchen_id:
         log.info("Kitchen notify skipped | no kitchen_id | order=%s", order.order_id)
+    else:
+        staff_ids = get_kitchen_staff_chat_ids_from_registry(order.kitchen_id)
 
-    if SHEETS and order.kitchen_id:
-        try:
-            staff_ids = SHEETS.get_kitchen_staff_chat_ids(order.kitchen_id)
-            for staff_id in staff_ids:
-                try:
-                    await tg_retry(lambda sid=staff_id: context.bot.send_photo(
-                        chat_id=sid,
-                        photo=file_id,
-                        caption=(
-                            f"📦 Заказ #{order.order_id} доставлен\n\n"
-                            f"🚴 Курьер: {order.courier_name}\n"
-                            f"📞 Телефон: {order.courier_phone}"
-                        )
-                    ))
-                except Exception as e:
-                    log.warning("Kitchen staff notify failed: %s", e)
-        except Exception as e:
-            log.warning("Kitchen lookup failed: %s", e)
+        log.info(
+            "Kitchen notify | order=%s | kitchen_id=%s | staff_ids=%s",
+            order.order_id,
+            order.kitchen_id,
+            staff_ids,
+        )
+
+        for staff_id in staff_ids:
+            try:
+                await tg_retry(lambda sid=staff_id: context.bot.send_photo(
+                    chat_id=sid,
+                    photo=file_id,
+                    caption=(
+                        f"📦 Заказ #{order.order_id} доставлен\n\n"
+                        f"🚴 Курьер: {order.courier_name}\n"
+                        f"📞 Телефон: {order.courier_phone}"
+                    )
+                ))
+            except Exception as e:
+                log.warning("Kitchen staff notify failed | staff_id=%s | %s", staff_id, e)
 
 
 async def handle_client_cancel(query, context: ContextTypes.DEFAULT_TYPE, uid: int, order_id: str):
