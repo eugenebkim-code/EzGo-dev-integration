@@ -2149,6 +2149,34 @@ async def handle_client_delete_problem(query, context: ContextTypes.DEFAULT_TYPE
             SHEETS.log_event(uid, ROLE_CLIENT, "ORDER_DELETED_AFTER_BADADDR", order_id=order_id)
 
     await ui_render(context, uid, "🗑 Заказ удален.", reply_markup=kb_client_menu())
+# =========================
+# FAST API STANDALONE
+# =========================
+
+@webapi_app.post("/api/v1/orders/notify")
+async def notify_couriers(
+    payload: dict,
+    X_API_KEY: str = Header(..., alias="X-API-KEY"),
+):
+    """
+    Получает уведомление о новом заказе от standalone API
+    и рассылает курьерам в Telegram.
+    """
+    if X_API_KEY != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    
+    order_id = payload["order_id"]
+    
+    print(f"📬 [NOTIFY] New order from API: {order_id}")
+    
+    # Используйте существующую функцию рассылки курьерам
+    # Найдите в вашем коде функцию которая отправляет заказы курьерам
+    # и вызовите её здесь
+    
+    # Например:
+    await broadcast_order_to_couriers(payload)
+    
+    return {"status": "ok", "order_id": order_id}
 
 # =========================
 # WEB API SERVER
