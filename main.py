@@ -59,6 +59,9 @@ import functools
 import asyncio
 from fastapi import FastAPI, Header, HTTPException
 import uvicorn
+import httpx
+
+
 APP_CONTEXT: ContextTypes.DEFAULT_TYPE | None = None
 
 # =========================
@@ -1379,7 +1382,59 @@ async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🛠 Панель администратора",
         reply_markup=kb_admin_menu()
     )
+# =========================
+# EXTERNAL ORDER
+# =========================
 
+async def inject_external_order(payload: dict) -> bool:
+    """
+    ЕДИНСТВЕННАЯ точка входа внешнего заказа в курьер-бот
+    """
+
+    order_id = str(payload.get("order_id", "")).strip()
+    if not order_id:
+        return False
+
+    if order_id in ORDERS:
+        return True
+
+    order = Order(
+        order_id=order_id,
+        created_at=now_ts(),
+        location=payload.get("city", ""),
+        price_krw=int(payload.get("price_krw", 0) or 0),
+        status=ORDER_NEW,
+
+        client_tg_id=int(payload.get("client_tg_id", 0)),
+        client_username="",
+        recipient_contact_text=f"{payload.get('client_name','')} · {payload.get('client_phone','')}",
+
+        pickup_address_ko=payload.get("pickup_address", ""),
+        drop_address_ko=payload.get("delivery_address", ""),
+        door_code="",
+
+        delivery_type="external",
+        delivery_type_other_text=payload.get("comment", ""),
+
+        delivery_time_type="",
+        delivery_time_text="",
+    )
+
+    ORDERS[order_id] = order
+
+    if SHEETS:
+        SHEETS.insert_order(asdict(order))
+        SHEETS.log_event(
+            order.client_tg_id,
+            ROLE_CLIENT,
+            "ORDER_CREATED_EXTERNAL",
+            order_id=order_id,
+        )
+
+    if APP_CONTEXT:
+        asyncio.create_task(notify_new_order(APP_CONTEXT, order))
+
+    return True
 
 # =========================
 # NOTIFICATIONS
@@ -1395,10 +1450,26 @@ async def handle_courier_orders(query, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # 🔑 если есть активный заказ — ТОЛЬКО ОН
+    # 🔑 если есть активный заказ — ТОЛЬКО ОН
     active = get_active_order_for_courier(uid)
     if active:
         context.user_data.pop(UI_MSG_ID_KEY, None)
-        await render_active_order_screen(query, context, active)
+
+        if active.status == ORDER_TAKEN:
+            kb = kb_order_taken(active.order_id)
+        elif active.status == ORDER_EN_ROUTE:
+            kb = kb_order_en_route(active.order_id)
+        elif active.status == ORDER_PICKED_UP:
+            kb = kb_order_picked_up(active.order_id)
+        else:
+            kb = None
+
+        await ui_render(
+            context,
+            uid,
+            render_order_taken_text(active),
+            reply_markup=kb
+        )
         return
 
     # 🔑 берем ОДИН следующий заказ
@@ -2155,17 +2226,11 @@ async def handle_client_delete_problem(query, context: ContextTypes.DEFAULT_TYPE
 # WEB API SERVER
 # =========================
 
-from fastapi import FastAPI
-
-webapi_app = FastAPI(title="Courier Bridge API")
-
 from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional
 from fastapi import Header, HTTPException
 import os
-
-EXTERNAL_ORDERS = {}
 
 API_KEY = os.getenv("API_KEY", "DEV_KEY")
 
@@ -2270,12 +2335,6 @@ async def create_order_from_external(
         "[COURIER][HTTP] order accepted | order_id=%s | debug_notify=%s",
         order_id,
         payload.debug_notify_telegram,
-    )
-
-    # 🔑 КЛЮЧЕВОЙ МОСТ
-    await create_order_from_webapi(
-        payload.model_dump(),
-        notify_telegram=bool(payload.debug_notify_telegram),
     )
 
     return {
@@ -2555,78 +2614,6 @@ async def calc_recommended_price_krw(pickup_addr: str, drop_addr: str) -> Option
     return price
 
 # =========================
-# WEB API → COURIER BRIDGE
-# =========================
-
-async def create_order_from_webapi(payload: dict, notify_telegram: bool = False) -> bool:
-    """
-    Принимает заказ от Web API.
-    Курьерка НЕ генерит order_id.
-    """
-
-    try:
-        order_id = str(payload.get("order_id", "")).strip()
-        if not order_id:
-            log.warning("WEBAPI ORDER REJECTED: no order_id")
-            return False
-
-        # защита от дублей
-        if order_id in ORDERS:
-            log.info("WEBAPI ORDER DUPLICATE: %s", order_id)
-            return True
-
-        order = Order(
-            order_id=order_id,
-            created_at=now_ts(),
-            location=payload.get("city", ""),
-            price_krw=int(payload.get("price_krw", 0) or 0),
-            status=ORDER_NEW,
-
-            client_tg_id=int(payload.get("client_tg_id", 0)),
-            client_username="",
-            recipient_contact_text=f"{payload.get('client_name','')} · {payload.get('client_phone','')}",
-
-            pickup_address_ko=payload.get("pickup_address", ""),
-            drop_address_ko=payload.get("delivery_address", ""),
-            door_code="",
-
-            delivery_type="webapi",
-            delivery_type_other_text=payload.get("comment", ""),
-            delivery_time_type="",
-            delivery_time_text="",
-        )
-
-        ORDERS[order_id] = order
-
-        if SHEETS:
-            SHEETS.insert_order(asdict(order))
-            SHEETS.log_event(
-                payload.get("client_tg_id", 0),
-                ROLE_CLIENT,
-                "ORDER_CREATED_FROM_WEBAPI",
-                order_id=order_id
-            )
-
-        log.info("WEBAPI ORDER ACCEPTED: %s", order_id)
-
-        # 🔔 уведомляем курьеров ВСЕГДА (если телега готова)
-        if APP_CONTEXT:
-            log.info("WEBAPI ORDER TELEGRAM NOTIFY | order_id=%s", order_id)
-            asyncio.create_task(notify_new_order(APP_CONTEXT, order))
-        else:
-            log.warning(
-                "WEBAPI ORDER TELEGRAM SKIPPED | APP_CONTEXT not ready | order_id=%s",
-                order_id,
-            )
-
-        return True
-
-    except Exception:
-        log.exception("[COURIER_CREATE_EXCEPTION]")
-        return {"status": "error", "reason": str(e)}
-
-    
-# =========================
 # MAIN CALLBACK HANDLER
 # =========================
 
@@ -2865,11 +2852,25 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     if data == "courier:orders":
-        # если есть активный заказ — показываем только его
         active = get_active_order_for_courier(uid)
         if active:
             context.user_data.pop(UI_MSG_ID_KEY, None)
-            await render_active_order_screen(query, context, active)
+
+            if active.status == ORDER_TAKEN:
+                kb = kb_order_taken(active.order_id)
+            elif active.status == ORDER_EN_ROUTE:
+                kb = kb_order_en_route(active.order_id)
+            elif active.status == ORDER_PICKED_UP:
+                kb = kb_order_picked_up(active.order_id)
+            else:
+                kb = None
+
+            await ui_render(
+                context,
+                uid,
+                render_order_taken_text(active),
+                reply_markup=kb
+            )
             return
 
         # иначе — показываем список заявок
@@ -3762,7 +3763,60 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # если мы здесь — просто игнорируем
     log.info("MESSAGE IGNORED (no active FSM)")
     return
+# =========================
+# POLLING
+# =========================
 
+async def poll_standalone_orders():
+    """
+    Курьер-бот опрашивает Standalone и забирает новые заказы
+    """
+    url = os.getenv("STANDALONE_API_URL")
+    api_key = os.getenv("STANDALONE_API_KEY")
+    interval = int(os.getenv("STANDALONE_POLL_INTERVAL", 5))
+
+    if not url or not api_key:
+        log.warning("STANDALONE polling disabled (env not set)")
+        return
+
+    log.info("STANDALONE POLLING STARTED")
+
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        while True:
+            try:
+                resp = await client.get(
+                    f"{url}/api/v1/orders/pending",
+                    headers={"X-API-KEY": api_key},
+                )
+
+                if resp.status_code != 200:
+                    log.warning("STANDALONE polling failed: %s", resp.status_code)
+                    await asyncio.sleep(interval)
+                    continue
+
+                data = resp.json()
+                orders = data.get("orders", [])
+
+                for payload in orders:
+                    order_id = payload["order_id"]
+
+                    if order_id in ORDERS:
+                        continue
+
+                    log.info("STANDALONE ORDER RECEIVED | %s", order_id)
+
+                    ok = await inject_external_order(payload)
+
+                    if ok:
+                        await client.post(
+                            f"{url}/api/v1/orders/{order_id}/mark_sent",
+                            headers={"X-API-KEY": api_key},
+                        )
+
+            except Exception:
+                log.exception("STANDALONE POLLING ERROR")
+
+            await asyncio.sleep(interval)
 
 # =========================
 # STARTUP HOOK
@@ -3884,7 +3938,8 @@ def main():
     
     global APP_CONTEXT
     APP_CONTEXT = app.bot  # 👈 ВАЖНО: bot, а не application
-
+    
+    app.create_task(poll_standalone_orders())
     
 
     # handlers
@@ -3896,31 +3951,13 @@ def main():
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, on_message))
 
-    import threading
-
-    def run_webapi():
-        port = int(os.getenv("PORT", "8080"))
-
-        uvicorn.run(
-            webapi_app,
-            host="0.0.0.0",
-            port=port,
-            log_level="info",
-        )
-
-    thread = threading.Thread(target=run_webapi, daemon=False)
-    thread.start()
-    time.sleep(3)  # Даём FastAPI стартовать
-
+   
     log.info("Bot + WebAPI starting (port 9001)")
     app.run_polling(
         allowed_updates=["message", "callback_query"],
         drop_pending_updates=True
     )
 
-
-# === ENTRYPOINT FOR RAILWAY ===
-app = webapi_app
 
 if __name__ == "__main__":
     main()
