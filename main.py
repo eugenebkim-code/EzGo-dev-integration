@@ -2277,33 +2277,40 @@ async def handle_proof_photo(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     # 1️⃣ Уведомляем КУХНЮ (если kitchen_id есть)
     if order.kitchen_id:
-        staff_ids = KITCHEN_REGISTRY.get(int(order.kitchen_id), [])
-        log.info(
-            "📢 Kitchen notify START | order=%s | kitchen_id=%s | staff_ids=%s",
-            order.order_id,
-            order.kitchen_id,
-            staff_ids,
-        )
+        staff_ids = KITCHEN_REGISTRY.get(int(order.kitchen_id))
 
-        for staff_id in staff_ids:
-            try:
-                # ✅ ИСПРАВЛЕНО: await напрямую, БЕЗ lambda
-                await context.bot.send_photo(
-                    chat_id=staff_id,
-                    photo=file_id,
-                    caption=(
-                        f"📦 Заказ #{order.order_id} доставлен\n\n"
-                        f"🚴 Курьер: {order.courier_name}\n"
-                        f"📞 Телефон: {order.courier_phone}"
-                    ),
-                )
-                log.info("✅ Kitchen staff notified | staff_id=%s", staff_id)
-            except Exception as e:
-                log.warning(
-                    "❌ Kitchen staff notify failed | staff_id=%s | error=%s",
-                    staff_id,
-                    e,
-                )
+        if not staff_ids:
+            log.error(
+                "❌ KITCHEN NOTIFY ABORT | no staff_ids | order=%s | kitchen_id=%s",
+                order.order_id,
+                order.kitchen_id,
+            )
+        else:
+            log.info(
+                "📢 Kitchen notify START | source=KITCHEN_REGISTRY | order=%s | kitchen_id=%s | staff_ids=%s",
+                order.order_id,
+                order.kitchen_id,
+                staff_ids,
+            )
+
+            for staff_id in staff_ids:
+                try:
+                    await context.bot.send_photo(
+                        chat_id=staff_id,
+                        photo=file_id,
+                        caption=(
+                            f"📦 Заказ #{order.order_id} доставлен\n\n"
+                            f"🚴 Курьер: {order.courier_name}\n"
+                            f"📞 Телефон: {order.courier_phone}"
+                        ),
+                    )
+                    log.info("✅ Kitchen staff notified | staff_id=%s", staff_id)
+                except Exception as e:
+                    log.warning(
+                        "❌ Kitchen staff notify failed | staff_id=%s | error=%s",
+                        staff_id,
+                        e,
+                    )
     else:
         log.info("⚠️ Kitchen notify SKIPPED | no kitchen_id | order=%s", order.order_id)
 
