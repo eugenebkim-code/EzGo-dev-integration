@@ -130,6 +130,7 @@ KITCHEN_REGISTRY: dict[int, list[int]] = {
     3: [2115245228],
     4: [2115245228],
     5: [1844813721],
+    6: [1844813721],    
 }
 
 # kitchen_registry.py или прямо в main.py
