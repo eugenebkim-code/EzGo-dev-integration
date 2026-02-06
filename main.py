@@ -1441,9 +1441,14 @@ async def inject_external_order(payload: dict) -> bool:
     """
     ЕДИНСТВЕННАЯ точка входа внешнего заказа в курьер-бот
     """
+    
+    # ✅ ДИАГНОСТИКА: логируем входящий payload
+    log.info("🔍 ========== INJECT EXTERNAL ORDER ==========")
+    log.info("🔍 Full payload: %s", payload)
 
     order_id = str(payload.get("order_id", "")).strip()
     if not order_id:
+        log.warning("❌ Empty order_id in payload")
         return False
 
     if order_id in ORDERS:
@@ -1456,9 +1461,25 @@ async def inject_external_order(payload: dict) -> bool:
 
         return True
 
+    # ✅ ИСПРАВЛЕНИЕ: извлекаем kitchen_id с логированием
+    kitchen_id = int(payload.get("kitchen_id") or 0)
+    
+    log.info("🔍 PARSED kitchen_id from payload: %s", kitchen_id)
+    
+    # ⚠️ ВРЕМЕННЫЙ ХАРДКОД: если kitchen_id=0, используем дефолт
+    if kitchen_id == 0:
+        kitchen_id = 5  # kitchen_5 (owner_chat_id=1844813721)
+        log.warning(
+            "⚠️ kitchen_id was 0 in payload, using HARDCODED default: %s | order=%s",
+            kitchen_id,
+            order_id,
+        )
+    
+    log.info("🔍 FINAL kitchen_id: %s", kitchen_id)
+
     order = Order(
         order_id=order_id,
-        kitchen_id=int(payload.get("kitchen_id") or 0),
+        kitchen_id=kitchen_id,  # ← используем переменную вместо inline
         created_at=now_ts(),
         location=payload.get("city", ""),
         price_krw=int(payload.get("price_krw", 0) or 0),
@@ -1480,6 +1501,15 @@ async def inject_external_order(payload: dict) -> bool:
     )
 
     ORDERS[order_id] = order
+    
+    # ✅ ДИАГНОСТИКА: логируем созданный заказ
+    log.info(
+        "✅ ORDER CREATED | order_id=%s | kitchen_id=%s | client=%s | price=%s",
+        order.order_id,
+        order.kitchen_id,
+        order.client_tg_id,
+        order.price_krw,
+    )
 
     if SHEETS:
         SHEETS.insert_order(asdict(order))
