@@ -2126,16 +2126,18 @@ async def handle_done_clicked(query, context: ContextTypes.DEFAULT_TYPE, courier
 
 
 async def handle_proof_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка фото подтверждения доставки"""
+    """Обработка фото подтверждения доставки от курьера"""
     
     uid = update.effective_user.id
     order_id = context.user_data.get("awaiting_proof_order_id", "")
 
-    log.info("🖼️ ========== HANDLE_PROOF_PHOTO ==========")
+    log.info("🖼️ ========== HANDLE_PROOF_PHOTO CALLED ==========")
     log.info("🖼️ uid=%s | order_id=%s", uid, order_id)
     log.info("🖼️ user_data=%s", context.user_data)
 
-    # Проверка 1: есть ли order_id?
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # ПРОВЕРКА 1: Есть ли order_id?
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     if not order_id:
         log.warning("❌ No order_id in user_data")
         context.user_data[COURIER_STATE_KEY] = K_NONE
@@ -2146,9 +2148,11 @@ async def handle_proof_photo(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return
 
-    # Проверка 2: есть ли заказ в ORDERS?
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # ПРОВЕРКА 2: Есть ли заказ в ORDERS?
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     order = ORDERS.get(order_id)
-    
+
     if not order:
         log.warning("❌ Order not found | order_id=%s", order_id)
         context.user_data[COURIER_STATE_KEY] = K_NONE
@@ -2160,19 +2164,25 @@ async def handle_proof_photo(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return
 
-    # Теперь можем логировать order
+    # ✅ ТЕПЕРЬ можем логировать order
     log.info(
-        "✅ ORDER FOUND | order_id=%s | status=%s | kitchen_id=%s | courier=%s",
+        "✅ ORDER LOADED | order_id=%s | status=%s | kitchen_id=%s | courier=%s",
         order_id,
         order.status,
-        getattr(order, "kitchen_id", None),
+        order.kitchen_id,
         order.courier_tg_id,
     )
 
-    # Проверка 3: правильный курьер?
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # ПРОВЕРКА 3: Правильный курьер?
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     if order.courier_tg_id != uid:
-        log.warning("❌ Wrong courier | order=%s | expected=%s | got=%s", 
-                   order_id, order.courier_tg_id, uid)
+        log.warning(
+            "❌ Wrong courier | order=%s | expected=%s | got=%s",
+            order_id,
+            order.courier_tg_id,
+            uid,
+        )
         context.user_data[COURIER_STATE_KEY] = K_NONE
         context.user_data.pop("awaiting_proof_order_id", None)
         await ui_render(
@@ -2182,9 +2192,15 @@ async def handle_proof_photo(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return
 
-    # Проверка 4: правильный статус?
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # ПРОВЕРКА 4: Правильный статус?
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     if order.status != ORDER_DONE_PENDING:
-        log.warning("❌ Wrong status | order=%s | status=%s", order_id, order.status)
+        log.warning(
+            "❌ Wrong status | order=%s | status=%s",
+            order_id,
+            order.status,
+        )
         context.user_data[COURIER_STATE_KEY] = K_NONE
         context.user_data.pop("awaiting_proof_order_id", None)
         await ui_render(
@@ -2194,14 +2210,16 @@ async def handle_proof_photo(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return
 
-    # ✅ ВСЕ проверки пройдены - обрабатываем фото
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # ✅ ВСЕ ПРОВЕРКИ ПРОЙДЕНЫ — ОБРАБАТЫВАЕМ ФОТО
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     photo = update.message.photo[-1]
     file_id = photo.file_id
     msg_id = str(update.message.message_id)
 
     log.info("✅ PHOTO ACCEPTED | order=%s | file_id=%s", order_id, file_id)
 
-    # Остальной код БЕЗ ИЗМЕНЕНИЙ (с async with ORDER_LOCK и т.д.)
+    # Сохраняем в БД
     async with ORDER_LOCK:
         order.proof_image_file_id = file_id
         order.proof_image_message_id = msg_id
@@ -2212,6 +2230,8 @@ async def handle_proof_photo(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if SHEETS:
             SHEETS.update_order(asdict(order))
             SHEETS.log_event(uid, ROLE_COURIER, "PROOF_RECEIVED", order_id=order_id)
+
+    # Отправляем в WebAPI (если external)
     if not getattr(order, "proof_sent_to_webapi", False):
         await send_status_to_webapi(
             order.order_id,
@@ -2220,22 +2240,16 @@ async def handle_proof_photo(update: Update, context: ContextTypes.DEFAULT_TYPE)
             proof_image_message_id=msg_id,
         )
         order.proof_sent_to_webapi = True
-        
-    # 🔴 ЖЕСТКО разрываем старый UI
-    context.user_data.pop(UI_MSG_ID_KEY, None)
 
-    # ✅ Новый экран курьера без активного заказа
-    await ui_render(
-        context,
-        update.effective_chat.id,
-        "✅ Заказ завершен.\n\n🛵 Меню курьера:",
-        reply_markup=kb_courier_menu_approved(uid)
-    )
-    # 1️⃣ уведомляем кухню
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # 🔔 УВЕДОМЛЕНИЯ
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    # 1️⃣ Уведомляем КУХНЮ (если kitchen_id есть)
     if order.kitchen_id:
         staff_ids = KITCHEN_REGISTRY.get(int(order.kitchen_id), [])
         log.info(
-            "Kitchen notify | order=%s | kitchen_id=%s | staff_ids=%s",
+            "📢 Kitchen notify START | order=%s | kitchen_id=%s | staff_ids=%s",
             order.order_id,
             order.kitchen_id,
             staff_ids,
@@ -2243,48 +2257,63 @@ async def handle_proof_photo(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         for staff_id in staff_ids:
             try:
-                await tg_retry(lambda sid=staff_id: context.bot.send_photo(
-                    chat_id=sid,
+                # ✅ ИСПРАВЛЕНО: await напрямую, БЕЗ lambda
+                await context.bot.send_photo(
+                    chat_id=staff_id,
                     photo=file_id,
                     caption=(
                         f"📦 Заказ #{order.order_id} доставлен\n\n"
                         f"🚴 Курьер: {order.courier_name}\n"
                         f"📞 Телефон: {order.courier_phone}"
-                    )
-                ))
+                    ),
+                )
+                log.info("✅ Kitchen staff notified | staff_id=%s", staff_id)
             except Exception as e:
-                log.warning("Kitchen staff notify failed: %s", e)
+                log.warning(
+                    "❌ Kitchen staff notify failed | staff_id=%s | error=%s",
+                    staff_id,
+                    e,
+                )
     else:
-        log.info("Kitchen notify skipped | no kitchen_id | order=%s", order.order_id)
+        log.info("⚠️ Kitchen notify SKIPPED | no kitchen_id | order=%s", order.order_id)
 
-
-    # 2️⃣ уведомляем клиента
+    # 2️⃣ Уведомляем КЛИЕНТА
     try:
-        await tg_retry(lambda: context.bot.send_photo(
+        await context.bot.send_photo(
             chat_id=order.client_tg_id,
             photo=file_id,
-            caption="✅ Ваш заказ выполнен."
-        ))
+            caption="✅ Ваш заказ выполнен.",
+        )
+        log.info("✅ Client notified | client_id=%s", order.client_tg_id)
     except Exception as e:
-        log.warning("Client proof send failed: %s", e)
+        log.warning(
+            "❌ Client notify failed | client_id=%s | error=%s",
+            order.client_tg_id,
+            e,
+        )
 
-
-    # 3️⃣ уведомляем админов
+    # 3️⃣ Уведомляем АДМИНОВ
     for admin_id in ADMIN_IDS:
         try:
-            await tg_retry(lambda aid=admin_id: context.bot.send_photo(
-                chat_id=aid,
+            await context.bot.send_photo(
+                chat_id=admin_id,
                 photo=file_id,
                 caption=(
                     f"✅ Заказ #{order.order_id} завершен.\n"
                     f"Курьер: {order.courier_name}, {order.courier_phone}"
-                )
-            ))
+                ),
+            )
+            log.info("✅ Admin notified | admin_id=%s", admin_id)
         except Exception as e:
-            log.warning("Admin proof send failed: %s", e)
+            log.warning(
+                "❌ Admin notify failed | admin_id=%s | error=%s",
+                admin_id,
+                e,
+            )
 
-
-    # 4️⃣ финальный UI (ОДИН РАЗ)
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # 4️⃣ ФИНАЛЬНЫЙ UI
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     context.user_data.pop(UI_MSG_ID_KEY, None)
     context.user_data[COURIER_STATE_KEY] = K_NONE
     context.user_data.pop("awaiting_proof_order_id", None)
@@ -2293,12 +2322,10 @@ async def handle_proof_photo(update: Update, context: ContextTypes.DEFAULT_TYPE)
         context,
         update.effective_chat.id,
         "✅ Заказ завершен.\n\n🛵 Меню курьера:",
-        reply_markup=kb_courier_menu_approved(uid)
+        reply_markup=kb_courier_menu_approved(uid),
     )
     
     
-
-
 async def handle_client_cancel(query, context: ContextTypes.DEFAULT_TYPE, uid: int, order_id: str):
     async with ORDER_LOCK:
         order = ORDERS.get(order_id)
